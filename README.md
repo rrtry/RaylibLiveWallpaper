@@ -1,4 +1,4 @@
-# Raylib Desktop Wallpaper
+# Raylib Live Wallpaper
 ![title](images/preview.png)
 
 This library allows users to create dynamic wallpapers on Windows using Raylib by utilizing an undocumented Windows API.
