@@ -28,8 +28,9 @@ int main()
 	float speedY = 4.5f;
 
 	// Main render loop.
-	while (!WindowShouldClose())    // This checks for raylib's internal close event (ESC key, etc.)
+	while (!WindowShouldClose())
 	{
+		// Update the mouse state of the replacement api.
 		RaylibDesktopUpdateMouseState();
 
 		// Update the circle's position.
