@@ -2,6 +2,9 @@
 ![title](images/preview.png)
 
 This library allows users to create dynamic wallpapers on Windows using Raylib by utilizing an undocumented Windows API.
+
+### Note
+
 This is just a preview, more work is needed to
 - optimize system impact (halt rendering when not visible)
 - provide input method replacements for keyboard
