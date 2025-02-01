@@ -2,6 +2,9 @@
 ![title](images/preview.png)
 
 This library allows users to create dynamic wallpapers on Windows using Raylib by utilizing an undocumented Windows API.
+This is just a preview, more work is needed to
+- optimize system impact (halt rendering when not visible)
+- provide input method replacements for keyboard
 
 ## Features
 
@@ -65,7 +68,7 @@ int main()
 
 ## Notes
 
-- To hide the console window when deploying set the SubSystem to "/SUBSYSTEM\:WINDOWS", and to avoid having to include "windows.h" also set the entry point back to "mainCRTStartup"
+- To hide the console window when deploying set the SubSystem to `/SUBSYSTEM\:WINDOWS`, and to avoid having to include `windows.h` also set the entry point back to `mainCRTStartup`
 - The wallpaper window becomes a child of a desktop window created using an undocumented windows feature.
 
 ### Mouse Input Functions
