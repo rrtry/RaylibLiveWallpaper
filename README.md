@@ -1,5 +1,6 @@
 # Raylib Live Wallpaper
 ![Logo](images/video.gif)
+
 This library allows users to create dynamic wallpapers on Windows using Raylib by utilizing an undocumented Windows API.
 
 ### Note
