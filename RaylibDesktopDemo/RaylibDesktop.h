@@ -1,10 +1,29 @@
 #pragma once
-
-extern int g_desktopWidth;
-extern int g_desktopHeight;
+#include <vector>
 
 // Call this function to initialize the desktop window.
 int InitRaylibDesktop();
+
+// Monitor setup 
+// Structure to hold information about a monitor
+typedef struct MonitorInfo {
+    int monitorLeftCoordinate;  // X coordinate of the monitor's top-left corner
+    int monitorTopCoordinate;   // Y coordinate of the monitor's top-left corner
+    int monitorWidth;           // Monitor width in pixels
+    int monitorHeight;          // Monitor height in pixels
+};
+
+// Enumerate all monitors and return their information
+std::vector<MonitorInfo> EnumerateAllMonitors();
+
+// pass -1 to get the entire desktop
+MonitorInfo GetWallpaperTarget(int monitorIndex);
+
+// Configure Desktop Positioning
+void ConfigureDesktopPositioning(MonitorInfo monitorInfo);
+
+// Monitor Occlusion Detection
+bool IsMonitorOccluded(const MonitorInfo& monitor, double occlusionThreshold = 0.95);
 
 // Call this function to reparent the raylib window to the desktop after raylib has created its own.
 void RaylibDesktopReparentWindow(void* raylibWindowHandle);
@@ -12,8 +31,8 @@ void RaylibDesktopReparentWindow(void* raylibWindowHandle);
 // Call this function to clean up the desktop window.
 void CleanupRaylibDesktop();
 
-// Mouse replacements since raylib's mouse functions don't work with custom parent windows.
 
+// Mouse replacements since raylib's mouse functions don't work with custom parent windows.
 // Minimal forward declaration of a Vector2 type (avoid conflicts with raylib's version)
 class Vector2;
 

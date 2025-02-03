@@ -8,8 +8,11 @@ int main()
 	// Initializes desktop replacement magic
 	InitRaylibDesktop();
 
+	// Setups the desktop (-1 is the entire desktop spanning all monitors)
+	MonitorInfo monitorInfo = GetWallpaperTarget(-1);
+
 	// Initialize the raylib window.
-	InitWindow(g_desktopWidth, g_desktopHeight, "Raylib Desktop Demo");
+	InitWindow(monitorInfo.monitorWidth, monitorInfo.monitorHeight, "Raylib Desktop Demo");
 
 	// Retrieve the handle for the raylib-created window.
 	void* raylibWindowHandle = GetWindowHandle();
@@ -17,12 +20,15 @@ int main()
 	// Reparent the raylib window to the window behind the desktop icons.
 	RaylibDesktopReparentWindow(raylibWindowHandle);
 
+	// Configure the desktop positioning.
+	ConfigureDesktopPositioning(monitorInfo);
+
 	// Now, enter the raylib render loop.
 	SetTargetFPS(60);
 
 	// --- Animation variables ---
-	float circleX = g_desktopWidth / 2.0f;
-	float circleY = g_desktopHeight / 2.0f;
+	float circleX = monitorInfo.monitorWidth / 2.0f;
+	float circleY = monitorInfo.monitorHeight / 2.0f;
 	float circleRadius = 100.0f;
 	float speedX = 4.0f;
 	float speedY = 4.5f;
@@ -33,15 +39,22 @@ int main()
 		// Update the mouse state of the replacement api.
 		RaylibDesktopUpdateMouseState();
 
+		//skip rendering if the wallpaper is occluded more than 95%
+		if (IsMonitorOccluded(monitorInfo, 0.95))
+		{
+			WaitTime(0.1);
+			continue;
+		}
+
 		// Update the circle's position.
 		circleX += speedX;
 		circleY += speedY;
 
 		// Bounce off the left/right boundaries.
-		if (circleX - circleRadius < 0 || circleX + circleRadius > g_desktopWidth)
+		if (circleX - circleRadius < 0 || circleX + circleRadius > monitorInfo.monitorWidth)
 			speedX = -speedX;
 		// Bounce off the top/bottom boundaries.
-		if (circleY - circleRadius < 0 || circleY + circleRadius > g_desktopHeight)
+		if (circleY - circleRadius < 0 || circleY + circleRadius > monitorInfo.monitorHeight)
 			speedY = -speedY;
 
 		// Begin the drawing phase.
@@ -69,6 +82,7 @@ int main()
 
 		DrawText(TextFormat("Mouse: %d, %d", mouseX, mouseY), mouseX, mouseY, 30, DARKGRAY);
 
+		DrawFPS(10, 10);
 		EndDrawing();
 	}
 

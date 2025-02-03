@@ -1,14 +1,311 @@
 #include "RaylibDesktop.h"
 
 #include <Windows.h>
-#include <shellscalingapi.h>  // For DPI awareness functions
-#pragma comment(lib, "Shcore.lib") // Required for SetProcessDpiAwareness and GetDpiForMonitor
+#include <limits>
+
+// For occlusion detection
+#include <dwmapi.h>
+// Required for DwmGetWindowAttribute
+#pragma comment(lib, "Dwmapi.lib")
+
+// For DPI awareness functions
+#include <shellscalingapi.h>  
+// Required for SetProcessDpiAwareness and GetDpiForMonitor
+#pragma comment(lib, "Shcore.lib") 
 
 // Global variable to hold the WorkerW handle (the window behind desktop icons)
 HWND g_workerWindowHandle = NULL;
+HWND g_raylibWindowHandle = NULL;
 
-int g_desktopWidth = 0;
-int g_desktopHeight = 0;
+//current monitor in desktop coordinates
+MonitorInfo g_selectedMonitor = { 0, 0, 0, 0 };
+
+//the offset to the desktop coordinates
+//windows desktop coordinates start at the top left of the primary monitor
+//subtract this offset to get the desktop coordinates
+int g_desktopX = 0;
+int g_desktopY = 0;
+
+// Monitor enumeration
+// Callback function called for each monitor by EnumDisplayMonitors
+BOOL CALLBACK MonitorEnumProc(
+    HMONITOR monitorHandle,       // Handle to the display monitor
+    HDC monitorDeviceContext,     // Handle to a device context (not used here)
+    LPRECT monitorRectangle,      // Pointer to a RECT structure (not used directly)
+    LPARAM lParam                 // Application-defined data; here, a pointer to a vector<MonitorInfo>
+)
+{
+    // Cast lParam to a pointer to our vector of MonitorInfo
+    std::vector<MonitorInfo>* pointerToMonitorVector = reinterpret_cast<std::vector<MonitorInfo>*>(lParam);
+
+    // Prepare a MONITORINFOEX structure to receive monitor information
+    MONITORINFOEX monitorInfoEx;
+    monitorInfoEx.cbSize = sizeof(MONITORINFOEX);
+
+    // Retrieve monitor information (including coordinates and dimensions)
+    if (GetMonitorInfo(monitorHandle, &monitorInfoEx))
+    {
+        // Calculate monitor coordinates and dimensions
+        int leftCoordinate = monitorInfoEx.rcMonitor.left;   // Left X coordinate
+        int topCoordinate = monitorInfoEx.rcMonitor.top;       // Top Y coordinate
+        int widthOfMonitor = monitorInfoEx.rcMonitor.right - monitorInfoEx.rcMonitor.left;   // Width = right - left
+        int heightOfMonitor = monitorInfoEx.rcMonitor.bottom - monitorInfoEx.rcMonitor.top;    // Height = bottom - top
+
+        // Create a MonitorInfo object with the retrieved data
+        MonitorInfo currentMonitorInfo;
+        currentMonitorInfo.monitorLeftCoordinate = leftCoordinate;
+        currentMonitorInfo.monitorTopCoordinate = topCoordinate;
+        currentMonitorInfo.monitorWidth = widthOfMonitor;
+        currentMonitorInfo.monitorHeight = heightOfMonitor;
+
+        // Add the monitor information to the vector
+        pointerToMonitorVector->push_back(currentMonitorInfo);
+    }
+
+    // Returning TRUE tells EnumDisplayMonitors to continue the enumeration.
+    return TRUE;
+}
+
+// Function to enumerate all monitors and return their information
+std::vector<MonitorInfo> EnumerateAllMonitors()
+{
+    // Vector to store information about each monitor
+    std::vector<MonitorInfo> monitorInfoVector;
+
+    // Call EnumDisplayMonitors.
+    // The first two parameters are NULL to indicate the entire virtual screen.
+    // The callback MonitorEnumProc will be called for each monitor.
+    EnumDisplayMonitors(NULL, NULL, MonitorEnumProc, reinterpret_cast<LPARAM>(&monitorInfoVector));
+
+	// convert to desktop coordinates which start at 0,0
+    g_desktopX = INT_MAX;
+    g_desktopY = INT_MAX;
+
+	for (auto& monitor : monitorInfoVector)
+	{
+		if (monitor.monitorLeftCoordinate < g_desktopX)
+		{
+            g_desktopX = monitor.monitorLeftCoordinate;
+		}
+		if (monitor.monitorTopCoordinate < g_desktopY)
+		{
+            g_desktopY = monitor.monitorTopCoordinate;
+		}
+	}
+
+	for (auto& monitor : monitorInfoVector)
+	{
+		monitor.monitorLeftCoordinate -= g_desktopX;
+		monitor.monitorTopCoordinate -= g_desktopY;
+	}
+
+    return monitorInfoVector;
+}
+
+MonitorInfo GetWallpaperTarget(int monitorIndex)
+{
+    // If monitorIndex is -1, then we use the entire virtual desktop.
+    std::vector<MonitorInfo> monitors = EnumerateAllMonitors();
+
+    if (monitorIndex < 0 || monitorIndex >= static_cast<int>(monitors.size()))
+    {
+        MonitorInfo info;
+        info.monitorLeftCoordinate = 0;// GetSystemMetrics(SM_XVIRTUALSCREEN);
+        info.monitorTopCoordinate = 0;// GetSystemMetrics(SM_YVIRTUALSCREEN);
+        info.monitorWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        info.monitorHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        return info;
+    }
+    else
+    {
+        // Otherwise, try to get the desired monitor from the enumeration.
+        return monitors[monitorIndex];
+    }
+}
+
+// Wallpaper Occlusion Fix
+// Data structure to hold parameters for occlusion detection via EnumWindows.
+struct FullscreenOcclusionData {
+    MonitorInfo monitor;         // Target monitor area (already adjusted relative to (0,0))
+	std::vector<RECT> occludedRects; // Rectangles of occluded areas
+};
+
+static bool IsInvisibleWin10BackgroundAppWindow(HWND hWnd)
+{
+    int CloakedVal;
+    HRESULT hRes = DwmGetWindowAttribute(hWnd, DWMWA_CLOAKED, &CloakedVal, sizeof(CloakedVal));
+    if (hRes != S_OK)
+    {
+        CloakedVal = 0;
+    }
+    return CloakedVal ? true : false;
+}
+
+// @brief Computes the fraction of the monitor area that is occluded by any rectangle in occludedRects.
+// @param occludedRects A vector of RECTs representing occluded regions.
+// @param monitor The monitor info (with coordinates relative to your desktop, starting at (0,0)).
+// @param sampleStep The spacing (in pixels) between sample points on the grid.
+// @return A value between 0.0 and 1.0 representing the approximate fraction of the monitor area that is occluded.
+double ComputeOcclusionFraction(const std::vector<RECT>& occludedRects, const MonitorInfo& monitor, int sampleStep = 100)
+{
+    int occludedCount = 0;
+    int totalSamples = 0;
+
+    // Loop over the monitor's area using the given step size.
+    for (int y = monitor.monitorTopCoordinate; y < monitor.monitorTopCoordinate + monitor.monitorHeight; y += sampleStep)
+    {
+        for (int x = monitor.monitorLeftCoordinate; x < monitor.monitorLeftCoordinate + monitor.monitorWidth; x += sampleStep)
+        {
+            totalSamples++;
+            bool isOccluded = false;
+            // Check if this sample point is within any occlusion rectangle.
+            for (const RECT& rect : occludedRects)
+            {
+                if (x >= rect.left && x < rect.right &&
+                    y >= rect.top && y < rect.bottom)
+                {
+                    isOccluded = true;
+                    break;
+                }
+            }
+            if (isOccluded)
+                occludedCount++;
+        }
+    }
+
+    // Avoid division by zero.
+    if (totalSamples == 0)
+        return 0.0;
+
+    return static_cast<double>(occludedCount) / static_cast<double>(totalSamples);
+}
+
+//struct WindowDebug
+//{
+//	HWND hwnd;
+//    char g_szClassName[256];
+//
+//	RECT rect;
+//	double occludedFraction;
+//};
+//
+//std::vector<WindowDebug> g_debugWindows = {};
+
+// Callback function for EnumWindows. This is called for each top-level window.
+BOOL CALLBACK FullscreenWindowEnumProc(HWND hwnd, LPARAM lParam)
+{
+    FullscreenOcclusionData* occlusionData = reinterpret_cast<FullscreenOcclusionData*>(lParam);
+
+	if (hwnd == g_raylibWindowHandle || hwnd == g_workerWindowHandle)
+	{
+		return TRUE;
+	}
+
+    // Skip non-visible or minimized windows.
+    if (!IsWindowVisible(hwnd) || IsIconic(hwnd))
+    {
+        return TRUE;
+    }
+
+	//make sure it isnt the shell window
+	if (GetShellWindow() == hwnd)
+	{
+		return TRUE;
+	}
+
+	//make sure it isnt a workerw window
+	char g_szClassName[256];
+	GetClassNameA(hwnd, g_szClassName, 256);
+
+	if (strcmp(g_szClassName, "WorkerW") == 0)
+	{
+		return TRUE;
+	}
+
+	//check that it isnt the Nvidia overlay
+	if (strcmp(g_szClassName, "CEF-OSC-WIDGET") == 0)
+	{
+		return TRUE;
+	}
+
+    // Skip the invisible windows that are part of the Windows 10 background app
+    if (IsInvisibleWin10BackgroundAppWindow(hwnd))
+    {
+        return TRUE;
+    }
+
+    // Retrieve the window's bounding rectangle.
+    RECT windowRect;
+    if (!GetWindowRect(hwnd, &windowRect))
+        return TRUE;
+
+	//convert window rect to desktop coordinates
+	windowRect.left -= g_desktopX;
+	windowRect.right -= g_desktopX;
+	windowRect.top -= g_desktopY;
+	windowRect.bottom -= g_desktopY;
+
+    // Build a rectangle for the target monitor.
+    RECT monitorRect;
+    monitorRect.left = occlusionData->monitor.monitorLeftCoordinate;
+    monitorRect.top = occlusionData->monitor.monitorTopCoordinate;
+    monitorRect.right = occlusionData->monitor.monitorLeftCoordinate + occlusionData->monitor.monitorWidth;
+    monitorRect.bottom = occlusionData->monitor.monitorTopCoordinate + occlusionData->monitor.monitorHeight;
+
+    // Calculate the intersection of the window's rectangle with the monitor's rectangle.
+    RECT intersectionRect;
+    if (!IntersectRect(&intersectionRect, &windowRect, &monitorRect))
+    {
+        // No intersection at all.
+        return TRUE;
+    }
+
+	//store the occluded area
+	occlusionData->occludedRects.push_back(intersectionRect);
+
+    //double occludedFraction = ComputeOcclusionFraction(occlusionData->occludedRects, occlusionData->monitor);
+
+	//WindowDebug debugWindow;
+	//debugWindow.hwnd = hwnd;
+	//debugWindow.occludedFraction = occludedFraction;
+	//debugWindow.rect = intersectionRect;
+	//strcpy_s(debugWindow.g_szClassName, g_szClassName);
+
+	//g_debugWindows.push_back(debugWindow);
+
+	//if (occludedFraction >= 0.95)
+	//{
+	//	// Stop enumeration if the monitor is mostly occluded.
+	//	return FALSE;
+	//}
+
+    // Continue checking other windows.
+    return TRUE;
+}
+
+// Determines whether any fullscreen (or large) window occludes the given monitor area.
+// The monitor's coordinates should be relative to the desktop origin (i.e., (0,0) at the top-left).
+// The occlusionThreshold parameter specifies what fraction of the monitor must be covered
+// to consider it occluded (e.g., 0.9 means 90%).
+//
+// Returns: true if the monitor is occluded; false otherwise.
+bool IsMonitorOccluded(const MonitorInfo& monitor, double occlusionThreshold)
+{
+    FullscreenOcclusionData occlusionData;
+    occlusionData.monitor = monitor;
+	occlusionData.occludedRects = {};
+
+    //g_debugWindows = {};
+
+    // Enumerate all top-level windows.
+    EnumWindows(FullscreenWindowEnumProc, reinterpret_cast<LPARAM>(&occlusionData));
+
+	// Calculate the fraction of the monitor that is occluded.
+    double occludedFraction = ComputeOcclusionFraction(occlusionData.occludedRects, monitor);
+
+	// Return true if the occluded fraction exceeds the threshold.
+	return occludedFraction >= occlusionThreshold;
+}
 
 // Callback function for EnumWindows to locate the proper WorkerW window
 BOOL CALLBACK EnumWindowsProc(HWND windowHandle, LPARAM lParam)
@@ -34,11 +331,6 @@ int InitRaylibDesktop()
         MessageBox(NULL, L"Failed to set DPI awareness.", L"Error", MB_OK);
         // Continue if needed, but coordinate values may be scaled.
     }
-
-    int primaryMonitorX = GetSystemMetrics(SM_XVIRTUALSCREEN);
-    int primaryMonitorY = GetSystemMetrics(SM_YVIRTUALSCREEN);
-    g_desktopWidth = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-    g_desktopHeight = GetSystemMetrics(SM_CYVIRTUALSCREEN);
 
     // Locate the Progman window (the desktop window)
     HWND progmanWindowHandle = FindWindow(L"Progman", NULL);
@@ -70,21 +362,29 @@ int InitRaylibDesktop()
 
 void RaylibDesktopReparentWindow(void* raylibWindowHandle)
 {
+	g_raylibWindowHandle = (HWND)raylibWindowHandle;
     // Reparent the raylib window to your custom WorkerW window.
     // This attaches the raylib rendering window as a child of your WorkerW,
     // which should place it behind desktop icons if your WorkerW is set up that way.
     SetParent((HWND)raylibWindowHandle, g_workerWindowHandle);
 
-    // Optionally, adjust window styles so that it behaves like a wallpaper.
+    // Adjust window styles so that it behaves like a wallpaper.
     // For example, you may remove the title bar or border:
     LONG_PTR style = GetWindowLongPtr((HWND)raylibWindowHandle, GWL_STYLE);
     style &= ~(WS_OVERLAPPEDWINDOW); // Remove common overlapped window styles.
     style |= WS_CHILD;                // Make it a child window.
     SetWindowLongPtr((HWND)raylibWindowHandle, GWL_STYLE, style);
+}
 
-    // (Optional) Resize/reposition the raylib window to match its new parent.
+void ConfigureDesktopPositioning(MonitorInfo monitorInfo)
+{
+	g_selectedMonitor = monitorInfo;
+
+    //SetWindowPos(g_raylibWindowHandle, NULL, 0, 0, monitorInfo.monitorWidth, monitorInfo.monitorHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+
+    // Resize/reposition the raylib window to match its new parent.
     // For example, if g_workerWindowHandle covers the full primary monitor:
-    SetWindowPos((HWND)raylibWindowHandle, NULL, 0, 0, g_desktopWidth, g_desktopHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(g_raylibWindowHandle, NULL, monitorInfo.monitorLeftCoordinate, monitorInfo.monitorTopCoordinate, monitorInfo.monitorWidth, monitorInfo.monitorHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void CleanupRaylibDesktop()
@@ -183,13 +483,18 @@ bool RaylibDesktopIsMouseButtonUp(int button)
 
 bool GetRelativeCursorPos(POINT *p)
 {
-    int virtualScreenX = GetSystemMetrics(SM_XVIRTUALSCREEN);
-    int virtualScreenY = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    int selectedMonitorX = g_selectedMonitor.monitorLeftCoordinate;
+    int selectedMonitorY = g_selectedMonitor.monitorTopCoordinate;
 
 	if (GetCursorPos(p))
 	{
-		p->x -= virtualScreenX;
-		p->y -= virtualScreenY;
+		// Convert to desktop coordinates
+		p->x -= g_desktopX;
+		p->y -= g_desktopY;
+
+		// Convert to window coordinates
+		p->x -= selectedMonitorX;
+		p->y -= selectedMonitorY;
 		return true;
 	}
 
