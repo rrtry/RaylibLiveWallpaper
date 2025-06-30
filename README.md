@@ -1,19 +1,20 @@
 # Raylib Live Wallpaper
 ![Logo](images/video.gif)
 
-This library allows users to create dynamic wallpapers on Windows using Raylib by utilizing an undocumented Windows API.
+This library allows users to create dynamic wallpapers on Windows using Raylib by using an undocumented Windows API.
 
 ### Note
 
 This is just a preview, more work is needed to
-- provide input method replacements for keyboard
+- provide input method replacements for the keyboard
 
 ## Features
 
+- Supports Windows 11 24H2 and prior!
 - Use familiar Raylib drawing methods to create a Live Wallpaper on the Windows desktop
 - Provides mouse input replacements for interactive desktops
 - Supports Multi Monitor Setups and is DPI aware.
-- Doesnt Render if Wallpaper or Monitor is occluded
+- Doesn't Render if Wallpaper or Monitor is occluded
 
 ## Getting Started
 
@@ -36,7 +37,7 @@ int main()
     // Initializes desktop replacement magic
     InitRaylibDesktop();
 
-    // Setups the desktop (-1 is the entire desktop spanning all monitors)
+    // Sets up the desktop (-1 is the entire desktop spanning all monitors)
     MonitorInfo monitorInfo = GetWallpaperTarget(-1);
 
     // Initialize the raylib window.
@@ -115,7 +116,7 @@ int RaylibDesktopGetMouseY(void);
 Vector2 RaylibDesktopGetMousePosition(void);
 ```
 
-Currently, there are no replacements for keyboard input,  may be added in the future.
+Currently, there are no replacements for keyboard input, which may be added in the future.
 
 ## License
 

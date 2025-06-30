@@ -8,14 +8,14 @@ int main()
 	// Initializes desktop replacement magic
 	InitRaylibDesktop();
 
-	// Setups the desktop (-1 is the entire desktop spanning all monitors)
+	// Sets up the desktop (-1 is the entire desktop spanning all monitors)
 	MonitorInfo monitorInfo = GetWallpaperTarget(-1);
 
 	// Initialize the raylib window.
 	InitWindow(monitorInfo.monitorWidth, monitorInfo.monitorHeight, "Raylib Desktop Demo");
 
 	// Retrieve the handle for the raylib-created window.
-	void* raylibWindowHandle = GetWindowHandle();
+	void *raylibWindowHandle = GetWindowHandle();
 
 	// Reparent the raylib window to the window behind the desktop icons.
 	RaylibDesktopReparentWindow(raylibWindowHandle);
@@ -34,14 +34,12 @@ int main()
 	float speedY = 4.5f;
 
 	// Main render loop.
-	while (!WindowShouldClose())
-	{
+	while (!WindowShouldClose()) {
 		// Update the mouse state of the replacement api.
 		RaylibDesktopUpdateMouseState();
 
-		//skip rendering if the wallpaper is occluded more than 95%
-		if (IsMonitorOccluded(monitorInfo, 0.95))
-		{
+		// skip rendering if the wallpaper is occluded more than 95%
+		if (IsMonitorOccluded(monitorInfo, 0.95)) {
 			WaitTime(0.1);
 			continue;
 		}
@@ -69,14 +67,12 @@ int main()
 		int mouseX = RaylibDesktopGetMouseX();
 		int mouseY = RaylibDesktopGetMouseY();
 
-		//check buttons
-		if (RaylibDesktopIsMouseButtonDown(0))
-		{
+		// check buttons
+		if (RaylibDesktopIsMouseButtonDown(0)) {
 			DrawCircle(mouseX, mouseY, 10, BLUE);
 		}
-		else if (RaylibDesktopIsMouseButtonPressed(1))
-		{
-			//exit on right click
+		else if (RaylibDesktopIsMouseButtonPressed(1)) {
+			// exit on right click
 			break;
 		}
 
