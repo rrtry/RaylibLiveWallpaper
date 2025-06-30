@@ -13,8 +13,14 @@
 // Required for SetProcessDpiAwareness and GetDpiForMonitor
 #pragma comment(lib, "Shcore.lib") 
 
-// Global variable to hold the WorkerW handle (the window behind desktop icons)
+// Global variables to hold handles within the desktop hierarchy
+// g_progmanWindowHandle : top level Program Manager window
+// g_workerWindowHandle  : child WorkerW window rendering the static wallpaper
+// g_shellViewWindowHandle: child ListView window displaying the desktop icons
+// g_raylibWindowHandle  : handle to the raylib window we inject
+HWND g_progmanWindowHandle = NULL;
 HWND g_workerWindowHandle = NULL;
+HWND g_shellViewWindowHandle = NULL;
 HWND g_raylibWindowHandle = NULL;
 
 //current monitor in desktop coordinates
@@ -333,12 +339,12 @@ int InitRaylibDesktop()
     }
 
     // Locate the Progman window (the desktop window)
-    HWND progmanWindowHandle = FindWindow(L"Progman", NULL);
+    g_progmanWindowHandle = FindWindow(L"Progman", NULL);
 
     // Send message 0x052C to Progman to force creation of a WorkerW window
     LRESULT result = 0;
     SendMessageTimeout(
-        progmanWindowHandle,
+        g_progmanWindowHandle,
         0x052C,          // Undocumented message to trigger WorkerW creation
         0,
         0,
@@ -347,10 +353,16 @@ int InitRaylibDesktop()
         reinterpret_cast<PDWORD_PTR>(&result)
     );
 
-    // Enumerate through top-level windows to find the WorkerW window behind desktop icons
-    EnumWindows(EnumWindowsProc, 0);
+    // Try to locate the Shell view (desktop icons) and WorkerW child directly under Progman
+    g_shellViewWindowHandle = FindWindowEx(g_progmanWindowHandle, NULL, L"SHELLDLL_DefView", NULL);
+    g_workerWindowHandle = FindWindowEx(g_progmanWindowHandle, NULL, L"WorkerW", NULL);
 
-    // Ensure the WorkerW handle was found
+    // Fallback for pre-24H2 builds where the WorkerW is a sibling window
+    if (g_workerWindowHandle == NULL)
+    {
+        EnumWindows(EnumWindowsProc, 0);
+    }
+
     if (g_workerWindowHandle == NULL)
     {
         MessageBox(NULL, L"Failed to find WorkerW window.", L"Error", MB_OK);
@@ -362,18 +374,35 @@ int InitRaylibDesktop()
 
 void RaylibDesktopReparentWindow(void* raylibWindowHandle)
 {
-	g_raylibWindowHandle = (HWND)raylibWindowHandle;
-    // Reparent the raylib window to your custom WorkerW window.
-    // This attaches the raylib rendering window as a child of your WorkerW,
-    // which should place it behind desktop icons if your WorkerW is set up that way.
-    SetParent((HWND)raylibWindowHandle, g_workerWindowHandle);
+    g_raylibWindowHandle = (HWND)raylibWindowHandle;
 
-    // Adjust window styles so that it behaves like a wallpaper.
-    // For example, you may remove the title bar or border:
-    LONG_PTR style = GetWindowLongPtr((HWND)raylibWindowHandle, GWL_STYLE);
-    style &= ~(WS_OVERLAPPEDWINDOW); // Remove common overlapped window styles.
-    style |= WS_CHILD;                // Make it a child window.
-    SetWindowLongPtr((HWND)raylibWindowHandle, GWL_STYLE, style);
+    // Prepare the raylib window to be a layered child of Progman
+    LONG_PTR style = GetWindowLongPtr(g_raylibWindowHandle, GWL_STYLE);
+    style &= ~(WS_OVERLAPPEDWINDOW); // Remove decorations
+    style |= WS_CHILD;               // Child style required for SetParent
+    SetWindowLongPtr(g_raylibWindowHandle, GWL_STYLE, style);
+
+    LONG_PTR exStyle = GetWindowLongPtr(g_raylibWindowHandle, GWL_EXSTYLE);
+    exStyle |= WS_EX_LAYERED;        // Make it a layered window for 24H2
+    SetWindowLongPtr(g_raylibWindowHandle, GWL_EXSTYLE, exStyle);
+    SetLayeredWindowAttributes(g_raylibWindowHandle, 0, 255, LWA_ALPHA);
+
+    // Reparent the raylib window directly to Progman
+    SetParent(g_raylibWindowHandle, g_progmanWindowHandle);
+
+    // Ensure correct Z-order: below icons but above the system wallpaper
+    if (g_shellViewWindowHandle)
+    {
+        SetWindowPos(g_raylibWindowHandle, g_shellViewWindowHandle, 0, 0, 0, 0,
+            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+    }
+    if (g_workerWindowHandle)
+    {
+        SetWindowPos(g_workerWindowHandle, g_raylibWindowHandle, 0, 0, 0, 0,
+            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+    }
+
+    RedrawWindow(g_raylibWindowHandle, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW);
 }
 
 void ConfigureDesktopPositioning(MonitorInfo monitorInfo)
@@ -383,7 +412,7 @@ void ConfigureDesktopPositioning(MonitorInfo monitorInfo)
     //SetWindowPos(g_raylibWindowHandle, NULL, 0, 0, monitorInfo.monitorWidth, monitorInfo.monitorHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 
     // Resize/reposition the raylib window to match its new parent.
-    // For example, if g_workerWindowHandle covers the full primary monitor:
+    // g_progmanWindowHandle spans the entire virtual desktop in modern builds
     SetWindowPos(g_raylibWindowHandle, NULL, monitorInfo.monitorLeftCoordinate, monitorInfo.monitorTopCoordinate, monitorInfo.monitorWidth, monitorInfo.monitorHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
