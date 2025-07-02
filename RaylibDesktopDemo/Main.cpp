@@ -1,6 +1,4 @@
-
 #include "RaylibDesktop.h"
-
 #include "raylib.h"
 
 int main()
@@ -9,7 +7,7 @@ int main()
 	InitRaylibDesktop();
 
 	// Sets up the desktop (-1 is the entire desktop spanning all monitors)
-	MonitorInfo monitorInfo = GetWallpaperTarget(-1);
+	MonitorInfo monitorInfo = GetWallpaperTarget(0);
 
 	// Initialize the raylib window.
 	InitWindow(monitorInfo.monitorWidth, monitorInfo.monitorHeight, "Raylib Desktop Demo");
@@ -39,7 +37,7 @@ int main()
 		RaylibDesktopUpdateMouseState();
 
 		// skip rendering if the wallpaper is occluded more than 95%
-		if (IsMonitorOccluded(monitorInfo, 0.95)) {
+		if (IsDesktopLocked() || IsMonitorOccluded(monitorInfo, 0.95)) {
 			WaitTime(0.1);
 			continue;
 		}

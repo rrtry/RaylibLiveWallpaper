@@ -8,6 +8,9 @@
 // Required for DwmGetWindowAttribute
 #pragma comment(lib, "Dwmapi.lib")
 
+#include <shlwapi.h>
+#pragma comment(lib, "Shlwapi.lib")
+
 // For DPI awareness functions
 #include <shellscalingapi.h>
 // Required for SetProcessDpiAwareness and GetDpiForMonitor
@@ -401,6 +404,65 @@ void ConfigureDesktopPositioning(MonitorInfo monitorInfo)
 		monitorInfo.monitorHeight,
 		SWP_NOZORDER | SWP_NOACTIVATE
 	);
+}
+
+static bool IsSecureDesktop()
+{
+	bool secure = true;
+	HDESK hDesktop = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS);
+
+	if (hDesktop) 
+	{
+
+		DWORD buffSize = 0;
+		GetUserObjectInformation(hDesktop, UOI_NAME, NULL, 0, &buffSize);
+
+		if (buffSize > 0) 
+		{
+			wchar_t *name = (wchar_t *)malloc(buffSize);
+			if (name != NULL && GetUserObjectInformation(hDesktop, UOI_NAME, name, buffSize, &buffSize)) 
+			{
+				secure = (_wcsicmp(name, L"Default") != 0);
+			}
+			if (name != NULL)
+				free(name);
+		}
+		CloseDesktop(hDesktop);
+	}
+	return secure;
+}
+
+bool IsDesktopLocked()
+{
+	if (IsSecureDesktop())
+		return true;
+
+	HWND hwnd = GetForegroundWindow();
+	if (!hwnd)
+		return false;
+
+	DWORD pid = 0;
+	GetWindowThreadProcessId(hwnd, &pid);
+	if (pid == 0)
+		return false;
+
+	HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+	if (!hProc)
+		return false;
+
+	WCHAR fullPath[MAX_PATH];
+	DWORD size = _countof(fullPath);
+
+	bool isLockApp = false;
+	if (QueryFullProcessImageNameW(hProc, 0, fullPath, &size)) 
+	{
+		LPCWSTR leaf = PathFindFileNameW(fullPath);
+		if (_wcsicmp(leaf, L"LockApp.exe") == 0)
+			isLockApp = true;
+	}
+
+	CloseHandle(hProc);
+	return isLockApp;
 }
 
 void CleanupRaylibDesktop()
