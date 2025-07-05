@@ -1,3 +1,7 @@
+#include <__msvc_ostream.hpp>
+#include <iostream>
+
+
 #include "RaylibDesktop.h"
 #include "raylib.h"
 
@@ -7,7 +11,7 @@ int main()
 	InitRaylibDesktop();
 
 	// Sets up the desktop (-1 is the entire desktop spanning all monitors)
-	MonitorInfo monitorInfo = GetWallpaperTarget(0);
+	MonitorInfo monitorInfo = GetWallpaperTarget(-1);
 
 	// Initialize the raylib window.
 	InitWindow(monitorInfo.monitorWidth, monitorInfo.monitorHeight, "Raylib Desktop Demo");
@@ -37,7 +41,16 @@ int main()
 		RaylibDesktopUpdateMouseState();
 
 		// skip rendering if the wallpaper is occluded more than 95%
-		if (IsDesktopLocked() || IsMonitorOccluded(monitorInfo, 0.95)) {
+		if (IsMonitorOccluded(monitorInfo, 0.95)) {
+			std::cout << "Wallpaper is occluded" << std::endl;
+			WaitTime(0.1);
+			continue;
+		}
+
+		if (IsDesktopLocked() ) {
+			std::cout << "Desktop is locked" << std::endl;
+			// If the desktop is locked, we can skip rendering.
+			// This is useful to avoid unnecessary rendering when the user is not interacting with the desktop.
 			WaitTime(0.1);
 			continue;
 		}

@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 #include <limits>
+#include <memory>
 
 // For occlusion detection
 #include <dwmapi.h>
@@ -406,30 +407,48 @@ void ConfigureDesktopPositioning(MonitorInfo monitorInfo)
 	);
 }
 
+struct DesktopCloser
+{
+	void operator()(HDESK h) const noexcept
+	{
+		if (h) {
+			CloseDesktop(h);
+		}
+	}
+};
+using unique_desktop = std::unique_ptr<std::remove_pointer_t<HDESK>, DesktopCloser>;
+
+struct HandleCloser
+{
+	void operator()(HANDLE h) const noexcept
+	{
+		if (h) {
+			CloseHandle(h);
+		}
+	}
+};
+using unique_handle = std::unique_ptr<std::remove_pointer_t<HANDLE>, HandleCloser>;
+
 static bool IsSecureDesktop()
 {
-	bool secure = true;
-	HDESK hDesktop = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS);
+	unique_desktop desktop {OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS)};
+	if (!desktop) // couldn’t query ⇒ assume we’re secure to be conservative
+		return true;
 
-	if (hDesktop) 
-	{
-
-		DWORD buffSize = 0;
-		GetUserObjectInformation(hDesktop, UOI_NAME, NULL, 0, &buffSize);
-
-		if (buffSize > 0) 
-		{
-			wchar_t *name = (wchar_t *)malloc(buffSize);
-			if (name != NULL && GetUserObjectInformation(hDesktop, UOI_NAME, name, buffSize, &buffSize)) 
-			{
-				secure = (_wcsicmp(name, L"Default") != 0);
-			}
-			if (name != NULL)
-				free(name);
-		}
-		CloseDesktop(hDesktop);
+	DWORD bytes = 0;
+	if (!GetUserObjectInformationW(desktop.get(), UOI_NAME, nullptr, 0, &bytes) &&
+		GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+		return true; // genuine failure
 	}
-	return secure;
+
+	if (bytes == 0)
+		return true; // shouldn’t happen, but stay conservative
+
+	std::vector<wchar_t> name((bytes / sizeof(wchar_t)) + 1, L'\0');
+	if (!GetUserObjectInformationW(desktop.get(), UOI_NAME, name.data(), bytes, &bytes))
+		return true;
+
+	return _wcsicmp(name.data(), L"Default") != 0;
 }
 
 bool IsDesktopLocked()
@@ -446,23 +465,16 @@ bool IsDesktopLocked()
 	if (pid == 0)
 		return false;
 
-	HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-	if (!hProc)
+	unique_handle proc {OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)};
+	if (!proc)
 		return false;
 
-	WCHAR fullPath[MAX_PATH];
-	DWORD size = _countof(fullPath);
+	WCHAR path[MAX_PATH];
+	DWORD len = std::size(path);
+	if (!QueryFullProcessImageNameW(proc.get(), 0, path, &len))
+		return false;
 
-	bool isLockApp = false;
-	if (QueryFullProcessImageNameW(hProc, 0, fullPath, &size)) 
-	{
-		LPCWSTR leaf = PathFindFileNameW(fullPath);
-		if (_wcsicmp(leaf, L"LockApp.exe") == 0)
-			isLockApp = true;
-	}
-
-	CloseHandle(hProc);
-	return isLockApp;
+	return _wcsicmp(PathFindFileNameW(path), L"LockApp.exe") == 0;
 }
 
 void CleanupRaylibDesktop()
