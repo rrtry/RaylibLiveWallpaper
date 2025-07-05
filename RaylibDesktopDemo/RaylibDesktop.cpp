@@ -2,11 +2,15 @@
 
 #include <Windows.h>
 #include <limits>
+#include <memory>
 
 // For occlusion detection
 #include <dwmapi.h>
 // Required for DwmGetWindowAttribute
 #pragma comment(lib, "Dwmapi.lib")
+
+#include <shlwapi.h>
+#pragma comment(lib, "Shlwapi.lib")
 
 // For DPI awareness functions
 #include <shellscalingapi.h>
@@ -401,6 +405,76 @@ void ConfigureDesktopPositioning(MonitorInfo monitorInfo)
 		monitorInfo.monitorHeight,
 		SWP_NOZORDER | SWP_NOACTIVATE
 	);
+}
+
+struct DesktopCloser
+{
+	void operator()(HDESK h) const noexcept
+	{
+		if (h) {
+			CloseDesktop(h);
+		}
+	}
+};
+using unique_desktop = std::unique_ptr<std::remove_pointer_t<HDESK>, DesktopCloser>;
+
+struct HandleCloser
+{
+	void operator()(HANDLE h) const noexcept
+	{
+		if (h) {
+			CloseHandle(h);
+		}
+	}
+};
+using unique_handle = std::unique_ptr<std::remove_pointer_t<HANDLE>, HandleCloser>;
+
+static bool IsSecureDesktop()
+{
+	unique_desktop desktop {OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS)};
+	if (!desktop) // couldn’t query ⇒ assume we’re secure to be conservative
+		return true;
+
+	DWORD bytes = 0;
+	if (!GetUserObjectInformationW(desktop.get(), UOI_NAME, nullptr, 0, &bytes) &&
+		GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+		return true; // genuine failure
+	}
+
+	if (bytes == 0)
+		return true; // shouldn’t happen, but stay conservative
+
+	std::vector<wchar_t> name((bytes / sizeof(wchar_t)) + 1, L'\0');
+	if (!GetUserObjectInformationW(desktop.get(), UOI_NAME, name.data(), bytes, &bytes))
+		return true;
+
+	return _wcsicmp(name.data(), L"Default") != 0;
+}
+
+bool IsDesktopLocked()
+{
+	if (IsSecureDesktop())
+		return true;
+
+	HWND hwnd = GetForegroundWindow();
+	if (!hwnd)
+		return false;
+
+	DWORD pid = 0;
+	GetWindowThreadProcessId(hwnd, &pid);
+	if (pid == 0)
+		return false;
+
+	unique_handle proc {OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)};
+	if (!proc)
+		return false;
+
+	WCHAR path[MAX_PATH];
+	DWORD len = std::size(path);
+	if (!QueryFullProcessImageNameW(proc.get(), 0, path, &len))
+		return false;
+
+	return _wcsicmp(PathFindFileNameW(path), L"LockApp.exe") == 0;
 }
 
 void CleanupRaylibDesktop()
